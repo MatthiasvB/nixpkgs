@@ -64,7 +64,16 @@ in
       type = with types; nullOr path;
     };
 
-    noAnalytics = mkOption {
+    dataDir = lib.mkOption {
+      description = ''
+        Location where meilisearch should persist its data. If not set, systemd's "dynamic user
+        defaults" will be used, which means /var/lib/meilisearch
+      '';
+      default = null;
+      type = with lib.types; nullOr path;
+    };
+
+    noAnalytics = lib.mkOption {
       description = ''
         Deactivates analytics.
         Analytics allow MeiliSearch to know how many users are using MeiliSearch,
@@ -110,31 +119,49 @@ in
       default = "104857600";
       type = types.str;
     };
-
   };
 
   ###### implementation
 
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
+
+    # used to restore dumps
+    environment.systemPackages = [ cfg.package ];
+
+    systemd.tmpfiles.rules = lib.mkIf (cfg.dataDir != null) [
+      "d '${cfg.dataDir}' - meilisearch meilisearch - -"
+    ];
+
     systemd.services.meilisearch = {
       description = "MeiliSearch daemon";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+
       environment = {
-        MEILI_DB_PATH = "/var/lib/meilisearch";
+        MEILI_DB_PATH = with cfg; if (dataDir != null) then dataDir else "/var/lib/meilisearch";
         MEILI_HTTP_ADDR = "${cfg.listenAddress}:${toString cfg.listenPort}";
         MEILI_NO_ANALYTICS = boolToString cfg.noAnalytics;
         MEILI_ENV = cfg.environment;
-        MEILI_DUMP_DIR = "/var/lib/meilisearch/dumps";
+        MEILI_DUMP_DIR = with cfg; "${if (dataDir != null) then dataDir else "/val/lib/meilisearch"}/dumps";
         MEILI_LOG_LEVEL = cfg.logLevel;
         MEILI_MAX_INDEX_SIZE = cfg.maxIndexSize;
       };
-      serviceConfig = {
-        ExecStart = "${cfg.package}/bin/meilisearch";
-        DynamicUser = true;
-        StateDirectory = "meilisearch";
-        EnvironmentFile = mkIf (cfg.masterKeyEnvironmentFile != null) cfg.masterKeyEnvironmentFile;
-      };
+      serviceConfig =
+        {
+          ExecStart = "${cfg.package}/bin/meilisearch";
+          DynamicUser = true;
+          EnvironmentFile = lib.mkIf (cfg.masterKeyEnvironmentFile != null) cfg.masterKeyEnvironmentFile;
+        }
+        // (
+          if (cfg.dataDir != null) then
+            {
+              ReadWritePaths = lib.mkIf (cfg.dataDir != null) [
+                cfg.dataDir
+              ];
+            }
+          else
+            { StateDirectory = lib.mkIf (cfg.dataDir == null) "meilisearch"; }
+        );
     };
   };
 }
