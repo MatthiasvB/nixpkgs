@@ -23,6 +23,8 @@ let
 in {
   # Attributes are named by their corresponding release channels
 
+  custom = opts: (mkStudio opts);
+
   stable = mkStudio (stableVersion // {
     channel = "stable";
     pname = "android-studio";
